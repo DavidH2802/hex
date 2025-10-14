@@ -1,4 +1,4 @@
-*Hex (C++)*
+Hex (C++)
 
 Small console Hex game with a dual-strategy bot: a light exhaustive tactical check for near-term forcing moves, and a Monte Carlo (MC) playout policy for evaluation. Default board is 11×11. You can play as Blue (top–bottom) or Red (left–right).
 
