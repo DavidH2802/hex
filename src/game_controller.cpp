@@ -1,22 +1,20 @@
 #include "game_controller.h"
+#include "constants.h"
 
 #include <iostream>           
 #include <vector>             
 #include <stack>              
 #include <utility>            
 #include <tuple>              
-#include <stdexcept>
-#include <thread>             
-#include <chrono>   
-
-const int BOARD_SIZE = 11;
+#include <stdexcept> 
+#include <chrono>
 
 using namespace std;
-using namespace std::chrono_literals;
+using namespace chrono;
 
 GameController::GameController () : player_colour(Square_State::BLUE) { // default colour
     Bot bot(Square_State::BLUE);
-    Board board = Board(BOARD_SIZE, BOARD_SIZE);
+    Board board = Board();
     
     int colour_player_tmp;
     int colour_bot;
@@ -28,7 +26,7 @@ GameController::GameController () : player_colour(Square_State::BLUE) { // defau
             cout << "Wrong input (only 0 or 1)\n";
         }
         else if (colour_player_tmp == 1){
-            bot = Bot(Square_State::RED);
+            bot.colour = Square_State::RED;
             player_colour = Square_State::BLUE;
             break;
         }
@@ -44,14 +42,12 @@ GameController::GameController () : player_colour(Square_State::BLUE) { // defau
             print_board(board);
             if (blue_won(board)) break;
             cout << "Bot thinking...\n";
-            this_thread::sleep_for(2s);
             pair <int, int> bot_move = bot.make_move(board.adj);
-            board.adj[bot_move.first][bot_move.second].first = bot.colour;
+            board.adj[bot_move.first][bot_move.second].first = bot.colour; // adding bot move to adj
             print_board(board);
         }
         else{
             cout << "Bot thinking...\n";
-            this_thread::sleep_for(2s);
             pair<int, int> bot_move = bot.make_move(board.adj);
             board.adj[bot_move.first][bot_move.second].first = bot.colour;
             print_board(board);
@@ -76,22 +72,23 @@ bool GameController::blue_won(const Board& board) {
     vector<vector<bool>> visited(board.y, vector<bool>(board.x, false));
     stack<pair<int, int>> s;
 
-    for (int col = 0; col < board.x; ++col) {
+    for (int col = 0; col < board.x; ++col) { // initializing with row 0
         if (board.adj[0][col].first == Square_State::BLUE) {
             s.push({0, col});
             visited[0][col] = true;
         }
     }
 
-    while (!s.empty()) {
+    while (!s.empty()) { // getting last added neighbour
         auto [row, col] = s.top();
         s.pop();
 
         if (row == board.y - 1) return true;
 
-        for (const auto& neighbour : board.adj[row][col].second) {
+        for (const auto& neighbour : board.adj[row][col].second) { // checking all neighbours
             const auto& [nbrRow, nbrCol, weight] = neighbour;
             (void)weight;
+            // if neighbour not visited and neighbour is Blue go there
             if (!visited[nbrRow][nbrCol] && board.adj[nbrRow][nbrCol].first == Square_State::BLUE) {
                 visited[nbrRow][nbrCol] = true;
                 s.push({nbrRow, nbrCol});
@@ -105,22 +102,23 @@ bool GameController::red_won(const Board& board) {
     vector<vector<bool>> visited(board.y, vector<bool>(board.x, false));
     stack<pair<int, int>> s;
 
-    for (int row = 0; row < board.y; ++row) {
+    for (int row = 0; row < board.y; ++row) { // initializing at column 0
         if (board.adj[row][0].first == Square_State::RED) {
             s.push({row, 0});
             visited[row][0] = true;
         }
     }
 
-    while (!s.empty()) {
+    while (!s.empty()) { // getting last added neighbour
         auto [row, col] = s.top();
         s.pop();
 
         if (col == board.x - 1) return true;
 
-        for (const auto& neighbour : board.adj[row][col].second) {
+        for (const auto& neighbour : board.adj[row][col].second) { // checking all neighbours
             const auto& [nbrRow, nbrCol, weight] = neighbour;
             (void)weight;
+            // if neighbour not visisted and red go there
             if (!visited[nbrRow][nbrCol] && board.adj[nbrRow][nbrCol].first == Square_State::RED) {
                 visited[nbrRow][nbrCol] = true;
                 s.push({nbrRow, nbrCol});

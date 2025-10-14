@@ -5,13 +5,24 @@
 #include <vector>
 #include <utility>
 #include <tuple>
+#include <stack>
+#include <random>
 
 using namespace std;
 
 class Bot{
     private:
         Square_State colour;
-        vector<pair<int, int>> moves;
+        // initialized once for faster mc iterations
+        vector<Square_State> flat_board;
+        vector<vector<int>> neighbors; 
+        vector<bool> visited;
+        vector<int> mask;
+        stack<int> s;
+        mt19937 rng;
+
+        int get_random_mc_iteration(vector<int>& free_indices, int move);
+        int check_win();
 
     public:
         Bot (const Square_State& colour);

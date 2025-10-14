@@ -18,7 +18,7 @@ class Board { //Board implemented as Graph
         vector<vector<pair<Square_State, vector<tuple<int, int, double>>>>> adj; // Adjacency list representation
 
     public:
-        Board(int x, int y);
+        Board();
 
         friend class GameController;
 

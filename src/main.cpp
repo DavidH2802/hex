@@ -4,7 +4,7 @@
 
 int main(){
     try{
-        GameController game;
+        GameController game; // starting game
         return 0;
     }
     catch (runtime_error& e){
