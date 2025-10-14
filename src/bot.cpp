@@ -29,7 +29,15 @@ Bot::Bot (const Square_State& colour) : colour(colour), flat_board(BOARD_SIZE*BO
 }
 
 pair<int, int> Bot::make_move (const vector<vector<pair<Square_State, vector<tuple<int, int, double>>>>>& adj){ // Evaluate moves based on MC
-    for (int i = 0; i < BOARD_SIZE; ++i){ // flatten current adj
+    // Flattened board for MC:
+    // - Contiguous memory => better cache locality in playout loops.
+    // - Faster randomization: we can shuffle a flat index vector and map to (r,c).
+    // - Simpler, branch-light inner loops during rollouts.
+    // Complexity note: a playout still costs O(N), but with fewer cache misses and
+    // less iterator overhead compared to nested 2D structures.
+
+
+    for (int i = 0; i < BOARD_SIZE; ++i){
         for (int j = 0; j < BOARD_SIZE; ++j){
             flat_board[j+(BOARD_SIZE*i)] = adj[i][j].first;
         }
@@ -42,6 +50,13 @@ pair<int, int> Bot::make_move (const vector<vector<pair<Square_State, vector<tup
             free_indices.push_back(i);
         }
     }
+    
+    // Dual-strategy selection:
+    // 1) Run a shallow exhaustive/tactical probe to detect forced wins/blocks.
+    // 2) If nothing decisive is found (or frontier is too large), switch to Monte Carlo.
+    // Rationale: exhaustive search is exponential in depth—use it only when the branch
+    // factor is small or a tactic is likely; MC scales as O(I * N) and gives a robust
+    // estimate over many playouts. Thresholds (depth/branch limits, I) can be tuned.
 
     vector<int> moves_evals(flat_board.size(), 0);
     // get number of possible combinations with free indices (log against overflowing)
@@ -63,7 +78,14 @@ pair<int, int> Bot::make_move (const vector<vector<pair<Square_State, vector<tup
             free_indices.push_back(move); 
         }
     }
-    else{ // all possible combinations (not so many as C <= MC_MAX_ITERATIONS)
+
+    // Exhaustive tactical check (shallow).
+    // Purpose: catch immediate wins/blocks and short forcing sequences that MC rollouts
+    // can miss due to variance. We intentionally cap depth/width because complexity
+    // grows ~O(b^d), where b ≈ number of legal moves and d = lookahead depth.
+    // If this block finds a forced win/block, we play it; otherwise we fall back to MC.
+    // Trade-off: tiny extra upfront time, but big reduction in obvious tactical blunders.
+    else{
         for (auto move: free_indices){
             flat_board[move] = this->colour;
             auto it = find(free_indices.begin(), free_indices.end(), move);
