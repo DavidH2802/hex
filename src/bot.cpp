@@ -1,5 +1,6 @@
 #include "bot.h"
 #include "constants.h"
+#include "thread_pool.h"
 
 #include <vector>
 #include <tuple>         
@@ -9,11 +10,16 @@
 #include <array> 
 #include <stack>
 #include <random>
-#include <cmath> 
+#include <cmath>
+#include <thread>
+#include <numeric>
+#include <cassert>
+#include <chrono>
+#include <iostream>
 
 using namespace std;
 
-Bot::Bot (const Square_State& colour) : colour(colour), flat_board(BOARD_SIZE*BOARD_SIZE), neighbors(BOARD_SIZE*BOARD_SIZE), visited(BOARD_SIZE*BOARD_SIZE, false), mask(),rng(random_device{}()) {
+Bot::Bot (const Square_State& colour) : colour(colour), flat_board(BOARD_SIZE*BOARD_SIZE), neighbors(BOARD_SIZE*BOARD_SIZE), mask(BOARD_SIZE*BOARD_SIZE), pool(thread::hardware_concurrency()), num_threads(thread::hardware_concurrency()) {
     const array<pair<int,int>,6> dirs = {{ // neighbour map
         {-1, 0}, {-1, +1}, {0, -1}, {0, +1}, {+1, -1}, {+1, 0}
     }};
@@ -36,12 +42,13 @@ pair<int, int> Bot::make_move (const vector<vector<pair<Square_State, vector<tup
     // Complexity note: a playout still costs O(N), but with fewer cache misses and
     // less iterator overhead compared to nested 2D structures.
 
-
+    const auto start = chrono::system_clock::now();
     for (int i = 0; i < BOARD_SIZE; ++i){
         for (int j = 0; j < BOARD_SIZE; ++j){
             flat_board[j+(BOARD_SIZE*i)] = adj[i][j].first;
         }
     }
+
     vector<int> free_indices;
     // get free indices
     free_indices.reserve(flat_board.size());
@@ -50,6 +57,10 @@ pair<int, int> Bot::make_move (const vector<vector<pair<Square_State, vector<tup
             free_indices.push_back(i);
         }
     }
+
+    vector<double> moves_evals(free_indices.size(), 0);
+
+    assert(moves_evals.size() == free_indices.size());
     
     // Dual-strategy selection:
     // 1) Run a shallow exhaustive/tactical probe to detect forced wins/blocks.
@@ -58,11 +69,11 @@ pair<int, int> Bot::make_move (const vector<vector<pair<Square_State, vector<tup
     // factor is small or a tactic is likely; MC scales as O(I * N) and gives a robust
     // estimate over many playouts. Thresholds (depth/branch limits, I) can be tuned.
 
-    vector<int> moves_evals(flat_board.size(), 0);
     // get number of possible combinations with free indices (log against overflowing)
-    double logC = exp(lgamma(free_indices.size()) - lgamma(((free_indices.size()-1)/2) + 1) - lgamma(free_indices.size() - (free_indices.size()-1)/2));
+    double logC = lgamma(free_indices.size()) - lgamma(((free_indices.size()-1)/2) + 1) - lgamma(free_indices.size() - (free_indices.size()-1)/2);
     if (logC > log(MC_MAX_ITERATIONS)){
-        for (auto move : free_indices){ // every move checked
+        for (int k = 0; k < free_indices.size(); ++k){ // every move checked
+            int move = k;
             flat_board[move] = this->colour;
             auto it = find(free_indices.begin(), free_indices.end(), move);
             if (it != free_indices.end()) {
@@ -70,9 +81,28 @@ pair<int, int> Bot::make_move (const vector<vector<pair<Square_State, vector<tup
                 free_indices.pop_back(); // remove last element
             }
 
-            for (int i = 0; i < MC_MAX_ITERATIONS; ++i){
-                moves_evals[move] += get_random_mc_iteration(free_indices, move); // add eval
+            assert(std::all_of(free_indices.begin(), free_indices.end(),
+                   [&](int x){ return flat_board[x] == Square_State::FREE; }));
+
+            vector<double> partial_sums(num_threads, 0);
+            int iterations_per_thread = MC_MAX_ITERATIONS/num_threads;
+
+            for (int t = 0; t < num_threads; ++t){
+                auto free_copy = free_indices;
+                pool.enqueue([&, move, t, free_copy] (mt19937& rng) mutable{
+                    vector<Square_State> local_board(flat_board);
+                    int local_sum = 0;
+                    for (int i = 0; i < iterations_per_thread; ++i){
+                        local_sum += get_random_mc_iteration(move, rng, local_board, free_copy);
+                    }
+                    partial_sums[t] = local_sum;
+                });
             }
+
+            pool.wait_all();
+
+            moves_evals[move] = accumulate(partial_sums.begin(), partial_sums.end(), 0.0);
+
             // add move back to free_indices
             flat_board[move] = Square_State::FREE;
             free_indices.push_back(move); 
@@ -111,7 +141,7 @@ pair<int, int> Bot::make_move (const vector<vector<pair<Square_State, vector<tup
                     
 
                 // Evaluate and record outcome
-                total_score += check_win();
+                total_score += check_win(flat_board);
 
                 // Reset board for next combination
                 for (int idx : free_indices)
@@ -122,46 +152,49 @@ pair<int, int> Bot::make_move (const vector<vector<pair<Square_State, vector<tup
         }
     }
     // return best move
-    int idx = distance(moves_evals.begin(), max_element(moves_evals.begin(), moves_evals.end()));
+    int best_k = distance(moves_evals.begin(), max_element(moves_evals.begin(), moves_evals.end()));
+    int best_move = free_indices[best_k];
 
-    return {idx/BOARD_SIZE, idx%BOARD_SIZE};
+    const auto end = chrono::system_clock::now();
+    auto duration = chrono::duration_cast<chrono::milliseconds>(end - start);
+    cout<< "Bot thought for " << duration.count() << "\n";
+    return {best_move/BOARD_SIZE, best_move%BOARD_SIZE};
 }
 
-int Bot::get_random_mc_iteration(vector<int>& free_indices, int move){
-    shuffle(free_indices.begin(), free_indices.end(), rng); // random mc
+int Bot::get_random_mc_iteration(int move, mt19937& rng, vector<Square_State>& board, vector<int>& shuffled){
+    shuffle(shuffled.begin(), shuffled.end(), rng); // random mc
 
-    int half = free_indices.size() / 2;
-    for (int i = 0; i < free_indices.size(); ++i) { // fill half of free_indices with Blue, other with Red
+    int half = shuffled.size() / 2;
+    for (int i = 0; i < shuffled.size(); ++i) { // fill half of free_indices with Blue, other with Red
         if (i < half){
-            flat_board[free_indices[i]] = this->colour;
+            board[shuffled[i]] = this->colour;
         }
         else{
             if (this->colour == Square_State::BLUE){
-                flat_board[free_indices[i]] = Square_State::RED;
+                board[shuffled[i]] = Square_State::RED;
             }
             else{
-                flat_board[free_indices[i]] = Square_State::BLUE;
+                board[shuffled[i]] = Square_State::BLUE;
             }
         }
     }
-    int win = check_win();
+    int win = check_win(board);
 
-    for (int idx : free_indices){
-        flat_board[idx] = Square_State::FREE;
+    for (int idx : shuffled){
+        board[idx] = Square_State::FREE;
     }
 
     return win;
 }
 
-int Bot::check_win(){
-    // cleanup after previous run
-    fill(visited.begin(), visited.end(), false);
-    while(!s.empty()) s.pop();
+int Bot::check_win(const vector<Square_State>& board){
+    vector<bool> visited(board.size(), false);
+    stack<int> s;
 
     if (this->colour == Square_State::RED){
         for (int r = 0; r < BOARD_SIZE; ++r) { // starts at column 0 (looking trough rows) 
             int i = r * BOARD_SIZE;
-            if (flat_board[i] == Square_State::RED) {
+            if (board[i] == Square_State::RED) {
                 s.push(i);
                 visited[i] = true;
             }
@@ -171,7 +204,7 @@ int Bot::check_win(){
             int col = i % BOARD_SIZE;
             if (col == BOARD_SIZE - 1) return 1; // reached right edge: red win
             for (int nbr : neighbors[i]) { // add neighbour to stack
-                if (!visited[nbr] && flat_board[nbr] == Square_State::RED) {
+                if (!visited[nbr] && board[nbr] == Square_State::RED) {
                     visited[nbr] = true;
                     s.push(nbr);
                 }
@@ -182,7 +215,7 @@ int Bot::check_win(){
     else if (this->colour == Square_State::BLUE){
         for (int c = 0; c < BOARD_SIZE; ++c){
             int i = c;
-            if (flat_board[i] == Square_State::BLUE){
+            if (board[i] == Square_State::BLUE){
                 s.push(i);
                 visited[i] = true;
             }
@@ -192,7 +225,7 @@ int Bot::check_win(){
             int row = i / BOARD_SIZE;
             if (row == BOARD_SIZE - 1) return 1; // reached bottom edge: blue win
             for (int nbr : neighbors[i]) {
-                if (!visited[nbr] && flat_board[nbr] == Square_State::BLUE) {
+                if (!visited[nbr] && board[nbr] == Square_State::BLUE) {
                     visited[nbr] = true;
                     s.push(nbr);
                 }

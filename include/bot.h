@@ -1,6 +1,7 @@
 #pragma once
 
 #include "types.h"
+#include "thread_pool.h"
 
 #include <vector>
 #include <utility>
@@ -16,13 +17,12 @@ class Bot{
         // initialized once for faster mc iterations
         vector<Square_State> flat_board;
         vector<vector<int>> neighbors; 
-        vector<bool> visited;
         vector<int> mask;
-        stack<int> s;
-        mt19937 rng;
+        ThreadPool pool;
+        int num_threads;
 
-        int get_random_mc_iteration(vector<int>& free_indices, int move);
-        int check_win();
+        int get_random_mc_iteration(int move, mt19937& rng, vector<Square_State>& board, vector<int>& shuffled);
+        int check_win(const vector<Square_State>& board);
 
     public:
         Bot (const Square_State& colour);
