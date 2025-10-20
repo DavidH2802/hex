@@ -19,7 +19,6 @@ class Bot{
         vector<vector<int>> neighbors; 
         vector<int> mask;
         ThreadPool pool;
-        vector<vector<Square_State>> thread_boards;
         int num_threads;
 
         int get_random_mc_iteration(int move, mt19937& rng, vector<Square_State>& board, vector<int>& shuffled);

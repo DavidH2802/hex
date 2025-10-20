@@ -32,8 +32,6 @@ Bot::Bot (const Square_State& colour) : colour(colour), flat_board(BOARD_SIZE*BO
                     neighbors[i].push_back(nr * BOARD_SIZE + nc);
             }
         }
-
-    thread_boards.resize(num_threads, vector<Square_State>(BOARD_SIZE*BOARD_SIZE));
 }
 
 pair<int, int> Bot::make_move (const vector<vector<pair<Square_State, vector<tuple<int, int, double>>>>>& adj){ // Evaluate moves based on MC
@@ -49,9 +47,6 @@ pair<int, int> Bot::make_move (const vector<vector<pair<Square_State, vector<tup
         for (int j = 0; j < BOARD_SIZE; ++j){
             flat_board[j+(BOARD_SIZE*i)] = adj[i][j].first;
         }
-    }
-    for (auto thread_board : thread_boards){
-        thread_board = flat_board;
     }
 
     vector<int> free_indices;
@@ -94,10 +89,10 @@ pair<int, int> Bot::make_move (const vector<vector<pair<Square_State, vector<tup
             int iterations_per_thread = MC_MAX_ITERATIONS/num_threads;
 
             for (int t = 0; t < num_threads; ++t){
-                pool.enqueue([&, move, t, free_copy] (mt19937& rng) mutable{
+                pool.enqueue([&, move, t, free_copy, board_copy = flat_board] (mt19937& rng) mutable{
                     int local_sum = 0;
                     for (int i = 0; i < iterations_per_thread; ++i){
-                        local_sum += get_random_mc_iteration(move, rng, thread_boards[t], free_copy);
+                        local_sum += get_random_mc_iteration(move, rng, board_copy, free_copy);
                     }
                     partial_sums[t] = local_sum;
                 });
