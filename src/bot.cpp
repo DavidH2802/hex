@@ -32,6 +32,8 @@ Bot::Bot (const Square_State& colour) : colour(colour), flat_board(BOARD_SIZE*BO
                     neighbors[i].push_back(nr * BOARD_SIZE + nc);
             }
         }
+
+    thread_boards.resize(num_threads, vector<Square_State>(BOARD_SIZE*BOARD_SIZE));
 }
 
 pair<int, int> Bot::make_move (const vector<vector<pair<Square_State, vector<tuple<int, int, double>>>>>& adj){ // Evaluate moves based on MC
@@ -47,6 +49,9 @@ pair<int, int> Bot::make_move (const vector<vector<pair<Square_State, vector<tup
         for (int j = 0; j < BOARD_SIZE; ++j){
             flat_board[j+(BOARD_SIZE*i)] = adj[i][j].first;
         }
+    }
+    for (auto thread_board : thread_boards){
+        thread_board = flat_board;
     }
 
     vector<int> free_indices;
@@ -72,8 +77,7 @@ pair<int, int> Bot::make_move (const vector<vector<pair<Square_State, vector<tup
     // get number of possible combinations with free indices (log against overflowing)
     double logC = lgamma(free_indices.size()) - lgamma(((free_indices.size()-1)/2) + 1) - lgamma(free_indices.size() - (free_indices.size()-1)/2);
     if (logC > log(MC_MAX_ITERATIONS)){
-        for (int k = 0; k < free_indices.size(); ++k){ // every move checked
-            int move = k;
+        for (auto move : free_indices){ // every move checked
             flat_board[move] = this->colour;
             auto it = find(free_indices.begin(), free_indices.end(), move);
             if (it != free_indices.end()) {
@@ -84,16 +88,16 @@ pair<int, int> Bot::make_move (const vector<vector<pair<Square_State, vector<tup
             assert(std::all_of(free_indices.begin(), free_indices.end(),
                    [&](int x){ return flat_board[x] == Square_State::FREE; }));
 
+            auto free_copy = free_indices;
+
             vector<double> partial_sums(num_threads, 0);
             int iterations_per_thread = MC_MAX_ITERATIONS/num_threads;
 
             for (int t = 0; t < num_threads; ++t){
-                auto free_copy = free_indices;
                 pool.enqueue([&, move, t, free_copy] (mt19937& rng) mutable{
-                    vector<Square_State> local_board(flat_board);
                     int local_sum = 0;
                     for (int i = 0; i < iterations_per_thread; ++i){
-                        local_sum += get_random_mc_iteration(move, rng, local_board, free_copy);
+                        local_sum += get_random_mc_iteration(move, rng, thread_boards[t], free_copy);
                     }
                     partial_sums[t] = local_sum;
                 });
@@ -157,7 +161,7 @@ pair<int, int> Bot::make_move (const vector<vector<pair<Square_State, vector<tup
 
     const auto end = chrono::system_clock::now();
     auto duration = chrono::duration_cast<chrono::milliseconds>(end - start);
-    cout<< "Bot thought for " << duration.count() << "\n";
+    cout<< "Bot thought for " << duration.count() << "ms\n";
     return {best_move/BOARD_SIZE, best_move%BOARD_SIZE};
 }
 

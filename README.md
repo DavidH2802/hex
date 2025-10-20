@@ -21,6 +21,8 @@ What I learned
 
 Dual strategy (exhaustive + Monte Carlo): Exhaustive checks are great at catching immediate wins/blocks and tiny tactical sequences; MC handles broader position evaluation without hand-tuned heuristics. The hybrid reduces blunders from pure randomness while avoiding the combinatorial blow-up of deep search.
 
+Multithreading: The bot parallelizes Monte Carlo playouts across hardware threads using `std::thread::hardware_concurrency()`. A custom thread pool distributes iterations, significantly reducing computation time per move. Each thread maintains its own RNG for lock-free random number generation during playouts and also has the current flat_board in its own personal thread_boards buffer at its index.
+
 Complexity vs. performance trade-offs:
 
 Let n be board dimension and N = n². With I MC iterations, one bot decision costs ~O(I · N) because a single playout is O(N) and we repeat I times.
@@ -29,13 +31,11 @@ Exhaustive lookahead is exponential in depth (roughly O(b^d) with branching fact
 
 Practical takeaway: keep exhaustive checks shallow, spend the rest of the budget on MC iterations.
 
-Win checking optimization: Using DFS over the player’s subgraph is O(N) per check. Dijkstra’s algorithm is unnecessary because the graph is unweighted and we only need connectivity, not shortest paths.
+Win checking optimization: Using DFS over the player's subgraph is O(N) per check. Dijkstra's algorithm is unnecessary because the graph is unweighted and we only need connectivity, not shortest paths.
 
-Performance (author’s tests)
+Performance (author's tests, 4-core CPU)
 
-11×11, 2,000 iterations: max ~1.2 s per bot move
-
-11×11, 5,000 iterations: max ~11 s per bot move
+11×11, 5,000 iterations: max ~4s per bot move
 
 Time & Space Complexity
 
@@ -49,7 +49,7 @@ Space: O(N) for board + auxiliary structures
 
 Project Structure
 
-src/ – game loop, board, bot, controller
+src/ – game loop, board, bot, controller, thread pool
 
 include/ – headers
 
@@ -68,4 +68,4 @@ Alpha-beta pruning / shallow minimax on top of the tactical layer (good for inte
 
 Smarter rollouts (e.g., bias playouts with connectivity heuristics or pattern moves rather than uniform random).
 
-Parallelization (threaded playouts or task-based parallel MC to scale iterations per second).
+Dynamic thread pool sizing based on workload characteristics and available hardware resources.
